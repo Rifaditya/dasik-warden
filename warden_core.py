@@ -39,7 +39,8 @@ PIRACY_PATTERNS = [
 
 GATEKEEPING_PATTERNS = [
     (r"\b(google\s+(is\s+free|it|that)|just\s+google(\s+it)?)\b", "Telling a user to just google it"),
-    (r"\b(rtfm|read\s+the\s+(fucking\s+)?(manual|wiki)|learn\s+to\s+read)\b", "Dismissive 'read the manual/wiki' response"),
+    # Only match dismissive / hostile variants of RTFM / read the wiki
+    (r"\b(rtfm|learn\s+to\s+read|read\s+the\s+fucking\s+(manual|wiki)|(just|go)\s+read\s+the\s+(manual|wiki))\b", "Dismissive 'read the manual/wiki' response"),
     (r"\b(dumb|stupid|idiotic)\s+(question|ask)\b", "Labeling a beginner question as dumb or stupid"),
     (r"\b(why\s+are\s+you\s+even\s+asking\s+this|waste\s+of\s+time\s+to\s+ask)\b", "Dismissive question shaming"),
 ]

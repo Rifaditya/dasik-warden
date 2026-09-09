@@ -15,7 +15,10 @@ class TestWardenCore(unittest.TestCase):
             "I love the Instant Gratification mod!",
             "Can someone check my log? https://mclo.gs/abc1234",
             "What is the crafting recipe for the copper bell?",
-            "Working fine on 1.21.1 and 26.2"
+            "Working fine on 1.21.1 and 26.2",
+            "read the wiki on this part you can find the guide",
+            "you can read the wiki for the item list",
+            "Check the wiki here: https://github.com/Rifaditya/dasiklibrary/wiki"
         ]
         for text in benign_samples:
             res = evaluate_message_content(text)
@@ -41,7 +44,9 @@ class TestWardenCore(unittest.TestCase):
             "google is free bro",
             "just google it",
             "RTFM or learn to read",
-            "read the wiki first",
+            "just read the wiki",
+            "go read the wiki",
+            "read the fucking manual",
             "what a dumb question",
             "why are you even asking this here"
         ]
