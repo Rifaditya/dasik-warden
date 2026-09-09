@@ -1,4 +1,4 @@
-﻿# Copyright (C) 2026 Dasik (Rifaditya) | GNU GPLv3
+# Copyright (C) 2026 Dasik (Rifaditya) | GNU GPLv3
 """
 Warden Core - Modular evaluation logic and state management for Dasik Warden.
 Enforces anti-piracy, zero-gatekeeping ("Help or Stay Silent"), and 3-strike disciplinary ladder.
@@ -126,13 +126,24 @@ class StrikeManager:
             json.dump(self._data, f, indent=2, ensure_ascii=False)
         os.replace(temp_path, self.storage_path)
 
-    def add_strike(self, user_id: int, reason: str, issuer_id: int, violation_type: ViolationType) -> Tuple[int, str]:
+    @staticmethod
+    def calculate_timeout_minutes(strike_count: int) -> int:
         """
-        Adds a strike and returns (new_strike_count, recommended_action).
-        Action recommendations:
-        - 1: "timeout_10m"
-        - 2: "timeout_1h"
-        - 3: "ban_permanent"
+        Progressive exponential timeout ladder:
+        Strike 1 = 5m, Strike 2 = 10m, Strike 3 = 20m, Strike 4 = 40m, etc.
+        Formula: 5 * (2 ** (strike_count - 1))
+        Capped at 40,320 minutes (28 days, the Discord API max per call).
+        """
+        if strike_count <= 0:
+            return 5
+        minutes = 5 * (2 ** (strike_count - 1))
+        # Discord limit: 28 days = 28 * 24 * 60 = 40320 minutes
+        return min(minutes, 40320)
+
+    def add_strike(self, user_id: int, reason: str, issuer_id: int, violation_type: ViolationType) -> Tuple[int, int]:
+        """
+        Adds a strike and returns (new_strike_count, timeout_minutes).
+        Never bans outright; progressively silences exponentially.
         """
         key = str(user_id)
         if key not in self._data:
@@ -148,14 +159,8 @@ class StrikeManager:
         self.save()
 
         count = len(self._data[key])
-        if count == 1:
-            action = "timeout_10m"
-        elif count == 2:
-            action = "timeout_1h"
-        else:
-            action = "ban_permanent"
-            
-        return count, action
+        timeout_minutes = self.calculate_timeout_minutes(count)
+        return count, timeout_minutes
 
     def get_strikes(self, user_id: int) -> List[Dict[str, Any]]:
         return self._data.get(str(user_id), [])

@@ -1,4 +1,4 @@
-﻿# Copyright (C) 2026 Dasik (Rifaditya) | GNU GPLv3
+# Copyright (C) 2026 Dasik (Rifaditya) | GNU GPLv3
 """
 Dasik Warden - Dedicated server moderation bot for Dasik Igaijinn Discord server.
 Enforces anti-piracy, zero-gatekeeping ("Help or Stay Silent"), and 3-strike disciplinary ladder.
@@ -44,29 +44,35 @@ strike_manager = StrikeManager(storage_path="strikes.json")
 # Role & Server Constants
 GUILD_ID = 1546093898907258933
 
+def format_duration(minutes: int) -> str:
+    """Formats minutes into human-readable string like '5 minutes', '2 hours 40 minutes', '28 days'."""
+    if minutes < 60:
+        return f"{minutes}-minute timeout"
+    hours = minutes // 60
+    rem_mins = minutes % 60
+    if hours < 24:
+        if rem_mins == 0:
+            return f"{hours}-hour timeout"
+        return f"{hours}h {rem_mins}m timeout"
+    days = hours // 24
+    rem_hours = hours % 24
+    if rem_hours == 0:
+        return f"{days}-day timeout"
+    return f"{days}d {rem_hours}h timeout"
+
 async def notify_and_punish(
     message: discord.Message,
     author: discord.Member,
     reason: str,
     violation_type: ViolationType,
     strike_count: int,
-    action: str,
+    timeout_minutes: int,
     matched_text: str = ""
 ):
-    """Executes discipline ladder and delivers solo-developer voiced notification."""
+    """Executes progressive exponential timeout and delivers solo-developer voiced notification."""
     guild = message.guild
-    # Escalation actions
-    action_desc = ""
-    timeout_duration: Optional[timedelta] = None
-
-    if action == "timeout_10m":
-        timeout_duration = timedelta(minutes=10)
-        action_desc = "10-minute timeout"
-    elif action == "timeout_1h":
-        timeout_duration = timedelta(hours=1)
-        action_desc = "1-hour timeout"
-    elif action == "ban_permanent" or violation_type == ViolationType.ZERO_TOLERANCE:
-        action_desc = "Permanent Ban"
+    timeout_duration = timedelta(minutes=timeout_minutes)
+    action_desc = format_duration(timeout_minutes)
 
     # Send DM to author
     try:
@@ -79,7 +85,7 @@ async def notify_and_punish(
             f"Hello {author.mention},\n\n"
             f"Your message in **{guild.name}** triggered a server guideline infraction:\n\n"
             f"• **Reason**: {reason}\n"
-            f"• **Current Strike Count**: {strike_count}/3\n"
+            f"• **Current Strike Count**: {strike_count}\n"
             f"• **Applied Action**: {action_desc}\n\n"
             "Please review our `#rules` and `#community-support` guidelines. "
             "We foster a welcoming, supportive, and zero-gatekeeping community."
@@ -89,13 +95,10 @@ async def notify_and_punish(
     except Exception:
         pass # DMs may be closed
 
-    # Apply Discord punishment
+    # Apply Discord punishment (progressive timeout, never banned)
     try:
-        if timeout_duration:
-            until = discord.utils.utcnow() + timeout_duration
-            await author.timeout(until, reason=f"Dasik Warden [Strike {strike_count}]: {reason}")
-        elif action == "ban_permanent" or violation_type == ViolationType.ZERO_TOLERANCE:
-            await guild.ban(author, reason=f"Dasik Warden [Strike {strike_count}]: {reason}", delete_message_days=1)
+        until = discord.utils.utcnow() + timeout_duration
+        await author.timeout(until, reason=f"Dasik Warden [Strike {strike_count}]: {reason}")
     except Exception as e:
         print(f"[Warden Error] Failed applying moderation action to {author.id}: {e}")
 
@@ -104,7 +107,7 @@ async def notify_and_punish(
         notice_embed = discord.Embed(
             title="🛡️ Dasik Warden Action",
             description=(
-                f"{author.mention} received a strike (**{strike_count}/3**).\n"
+                f"{author.mention} received Strike **#{strike_count}**.\n"
                 f"**Reason**: {reason}\n"
                 f"**Action**: {action_desc}"
             ),
@@ -143,24 +146,25 @@ async def on_message(message: discord.Message):
 
     member: discord.Member = message.author
 
-    # 1. Zero Tolerance (Malware, doxxing, token loggers) -> Immediate Ban
+    # 1. Zero Tolerance (Malware, doxxing, token loggers) -> Maximum 28-day timeout
     if res.violation_type == ViolationType.ZERO_TOLERANCE:
         try:
             await message.delete()
         except Exception:
             pass
-        strike_count, _ = strike_manager.add_strike(member.id, res.reason, bot.user.id, res.violation_type)
-        await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, "ban_permanent", res.matched_pattern)
+        strike_count, timeout_minutes = strike_manager.add_strike(member.id, res.reason, bot.user.id, res.violation_type)
+        # Give maximum timeout immediately for zero tolerance (40,320 mins = 28 days)
+        await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, 40320, res.matched_pattern)
         return
 
-    # 2. Piracy & Warez -> Immediate Deletion + Strike Ladder
+    # 2. Piracy & Warez -> Immediate Deletion + Progressive Exponential Timeout
     if res.violation_type == ViolationType.PIRACY:
         try:
             await message.delete()
         except Exception:
             pass
-        strike_count, action = strike_manager.add_strike(member.id, res.reason, bot.user.id, res.violation_type)
-        await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, action, res.matched_pattern)
+        strike_count, timeout_minutes = strike_manager.add_strike(member.id, res.reason, bot.user.id, res.violation_type)
+        await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, timeout_minutes, res.matched_pattern)
         return
 
     # 3. Gatekeeping ("Help or Stay Silent") -> Polite Reminder Nudge (or Strike on persistence)
@@ -192,8 +196,8 @@ async def on_message(message: discord.Message):
                 await message.delete()
             except Exception:
                 pass
-            strike_count, action = strike_manager.add_strike(member.id, "Repeated gatekeeping after warning", bot.user.id, res.violation_type)
-            await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, action, res.matched_pattern)
+            strike_count, timeout_minutes = strike_manager.add_strike(member.id, "Repeated gatekeeping after warning", bot.user.id, res.violation_type)
+            await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, timeout_minutes, res.matched_pattern)
         return
 
     await bot.process_commands(message)
@@ -201,22 +205,22 @@ async def on_message(message: discord.Message):
 
 # ==================== SLASH COMMANDS ====================
 
-@bot.tree.command(name="strikes", description="View moderation strike history for a member.")
-@app_commands.describe(member="The member to inspect")
+@bot.tree.command(name="strikes", description="Check strikes and infractions for a member.")
+@app_commands.describe(member="The member whose strikes you want to view")
 @app_commands.default_permissions(moderate_members=True)
 async def strikes_cmd(interaction: discord.Interaction, member: discord.Member):
     strikes = strike_manager.get_strikes(member.id)
     if not strikes:
-        await interaction.response.send_message(f"✅ **{member.display_name}** has 0 strikes on record.", ephemeral=True)
+        await interaction.response.send_message(f"✨ {member.mention} has a clean record with **0 strikes**.", ephemeral=True)
         return
 
     embed = discord.Embed(
-        title=f"📋 Strike History: {member.display_name}",
-        description=f"Total strikes: **{len(strikes)}/3**",
+        title=f"🛡️ Strike Record: {member.name} ({member.id})",
+        description=f"Total Infractions: **{len(strikes)}**",
         color=0xe67e22,
         timestamp=datetime.now(timezone.utc)
     )
-    for idx, s in enumerate(strikes, 1):
+    for idx, s in enumerate(strikes, start=1):
         ts = f"<t:{s['timestamp']}:R>" if "timestamp" in s else "Unknown"
         embed.add_field(
             name=f"Strike #{idx} [{s.get('type', 'manual')}]",
@@ -230,29 +234,15 @@ async def strikes_cmd(interaction: discord.Interaction, member: discord.Member):
 @app_commands.describe(member="The member to warn", reason="Reason for the warning")
 @app_commands.default_permissions(moderate_members=True)
 async def warn_cmd(interaction: discord.Interaction, member: discord.Member, reason: str):
-    strike_count, action = strike_manager.add_strike(member.id, reason, interaction.user.id, ViolationType.MANUAL_WARN)
+    strike_count, timeout_minutes = strike_manager.add_strike(member.id, reason, interaction.user.id, ViolationType.MANUAL_WARN)
 
-    action_desc = "Warning logged"
-    timeout_duration = None
-    if action == "timeout_10m":
-        timeout_duration = timedelta(minutes=10)
-        action_desc = "10-minute timeout"
-    elif action == "timeout_1h":
-        timeout_duration = timedelta(hours=1)
-        action_desc = "1-hour timeout"
-    elif action == "ban_permanent":
-        action_desc = "Permanent Ban"
+    action_desc = format_duration(timeout_minutes)
+    timeout_duration = timedelta(minutes=timeout_minutes)
 
-    if timeout_duration:
-        try:
-            await member.timeout(discord.utils.utcnow() + timeout_duration, reason=f"Manual warn: {reason}")
-        except Exception as e:
-            print(f"Failed applying timeout: {e}")
-    elif action == "ban_permanent":
-        try:
-            await interaction.guild.ban(member, reason=f"Strike 3 reached: {reason}", delete_message_days=0)
-        except Exception as e:
-            print(f"Failed applying ban: {e}")
+    try:
+        await member.timeout(discord.utils.utcnow() + timeout_duration, reason=f"Manual warn: {reason}")
+    except Exception as e:
+        print(f"Failed applying timeout: {e}")
 
     # Send DM
     try:
@@ -262,7 +252,7 @@ async def warn_cmd(interaction: discord.Interaction, member: discord.Member, rea
             description=(
                 f"You received a strike in **{interaction.guild.name}**.\n\n"
                 f"• **Reason**: {reason}\n"
-                f"• **Strike Count**: {strike_count}/3\n"
+                f"• **Strike Count**: #{strike_count}\n"
                 f"• **Applied Action**: {action_desc}"
             )
         )
@@ -271,7 +261,7 @@ async def warn_cmd(interaction: discord.Interaction, member: discord.Member, rea
         pass
 
     await interaction.response.send_message(
-        f"⚠️ Issued Strike **{strike_count}/3** to {member.mention} for: *{reason}* ({action_desc}).",
+        f"⚠️ Issued Strike **#{strike_count}** to {member.mention} for: *{reason}* ({action_desc}).",
         ephemeral=False
     )
 

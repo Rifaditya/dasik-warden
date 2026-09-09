@@ -1,4 +1,4 @@
-﻿# Copyright (C) 2026 Dasik (Rifaditya) | GNU GPLv3
+# Copyright (C) 2026 Dasik (Rifaditya) | GNU GPLv3
 """
 Unit tests for Dasik Warden evaluation heuristics and strike progression.
 """
@@ -72,28 +72,33 @@ class TestWardenCore(unittest.TestCase):
             sm = StrikeManager(storage_path=test_db)
             user_id = 9876543210
 
-            # Strike 1: 10m timeout
-            c1, a1 = sm.add_strike(user_id, "Piracy link", 111, ViolationType.PIRACY)
+            # Strike 1: 5m timeout
+            c1, m1 = sm.add_strike(user_id, "Piracy link", 111, ViolationType.PIRACY)
             self.assertEqual(c1, 1)
-            self.assertEqual(a1, "timeout_10m")
+            self.assertEqual(m1, 5)
 
-            # Strike 2: 1h timeout
-            c2, a2 = sm.add_strike(user_id, "Repeated gatekeeping", 111, ViolationType.GATEKEEPING)
+            # Strike 2: 10m timeout
+            c2, m2 = sm.add_strike(user_id, "Repeated gatekeeping", 111, ViolationType.GATEKEEPING)
             self.assertEqual(c2, 2)
-            self.assertEqual(a2, "timeout_1h")
+            self.assertEqual(m2, 10)
 
-            # Strike 3: Ban
-            c3, a3 = sm.add_strike(user_id, "Third infraction", 111, ViolationType.MANUAL_WARN)
+            # Strike 3: 20m timeout
+            c3, m3 = sm.add_strike(user_id, "Third infraction", 111, ViolationType.MANUAL_WARN)
             self.assertEqual(c3, 3)
-            self.assertEqual(a3, "ban_permanent")
+            self.assertEqual(m3, 20)
+
+            # Strike 4: 40m timeout
+            c4, m4 = sm.add_strike(user_id, "Fourth infraction", 111, ViolationType.MANUAL_WARN)
+            self.assertEqual(c4, 4)
+            self.assertEqual(m4, 40)
 
             # Verify fetch
             history = sm.get_strikes(user_id)
-            self.assertEqual(len(history), 3)
+            self.assertEqual(len(history), 4)
 
             # Clear strikes
             cleared = sm.clear_strikes(user_id)
-            self.assertEqual(cleared, 3)
+            self.assertEqual(cleared, 4)
             self.assertEqual(len(sm.get_strikes(user_id)), 0)
         finally:
             if os.path.exists(test_db):
