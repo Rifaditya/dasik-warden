@@ -67,12 +67,13 @@ async def notify_and_punish(
     violation_type: ViolationType,
     strike_count: int,
     timeout_minutes: int,
+    should_ban: bool = False,
     matched_text: str = ""
 ):
-    """Executes progressive exponential timeout and delivers solo-developer voiced notification."""
+    """Executes progressive exponential timeout or final 3x Strike 8 ban."""
     guild = message.guild
     timeout_duration = timedelta(minutes=timeout_minutes)
-    action_desc = format_duration(timeout_minutes)
+    action_desc = "Permanent Ban (Reached Strike 8 three times)" if should_ban else format_duration(timeout_minutes)
 
     # Send DM to author
     try:
@@ -85,7 +86,7 @@ async def notify_and_punish(
             f"Hello {author.mention},\n\n"
             f"Your message in **{guild.name}** triggered a server guideline infraction:\n\n"
             f"• **Reason**: {reason}\n"
-            f"• **Current Strike Count**: {strike_count}\n"
+            f"• **Current Strike Count**: #{strike_count}\n"
             f"• **Applied Action**: {action_desc}\n\n"
             "Please review our `#rules` and `#community-support` guidelines. "
             "We foster a welcoming, supportive, and zero-gatekeeping community."
@@ -95,10 +96,17 @@ async def notify_and_punish(
     except Exception:
         pass # DMs may be closed
 
-    # Apply Discord punishment (progressive timeout, never banned)
+    # Apply Discord punishment (ban on 3rd Strike 8 infraction, otherwise timeout)
     try:
-        until = discord.utils.utcnow() + timeout_duration
-        await author.timeout(until, reason=f"Dasik Warden [Strike {strike_count}]: {reason}")
+        if should_ban:
+            await guild.ban(
+                author,
+                reason=f"Dasik Warden [Strike {strike_count} - 3x Peak Threshold Reached]: {reason}",
+                delete_message_days=1
+            )
+        else:
+            until = discord.utils.utcnow() + timeout_duration
+            await author.timeout(until, reason=f"Dasik Warden [Strike {strike_count}]: {reason}")
     except Exception as e:
         print(f"[Warden Error] Failed applying moderation action to {author.id}: {e}")
 
@@ -152,9 +160,9 @@ async def on_message(message: discord.Message):
             await message.delete()
         except Exception:
             pass
-        strike_count, timeout_minutes = strike_manager.add_strike(member.id, res.reason, bot.user.id, res.violation_type)
-        # Give maximum timeout immediately for zero tolerance (40,320 mins = 28 days)
-        await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, 40320, res.matched_pattern)
+        strike_count, timeout_minutes, should_ban = strike_manager.add_strike(member.id, res.reason, bot.user.id, res.violation_type)
+        # Give maximum timeout immediately for zero tolerance (40,320 mins = 28 days) or ban if threshold reached
+        await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, 40320, should_ban, res.matched_pattern)
         return
 
     # 2. Piracy & Warez -> Immediate Deletion + Progressive Exponential Timeout
@@ -163,8 +171,8 @@ async def on_message(message: discord.Message):
             await message.delete()
         except Exception:
             pass
-        strike_count, timeout_minutes = strike_manager.add_strike(member.id, res.reason, bot.user.id, res.violation_type)
-        await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, timeout_minutes, res.matched_pattern)
+        strike_count, timeout_minutes, should_ban = strike_manager.add_strike(member.id, res.reason, bot.user.id, res.violation_type)
+        await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, timeout_minutes, should_ban, res.matched_pattern)
         return
 
     # 3. Gatekeeping ("Help or Stay Silent") -> Polite Reminder Nudge (or Strike on persistence)
@@ -196,8 +204,8 @@ async def on_message(message: discord.Message):
                 await message.delete()
             except Exception:
                 pass
-            strike_count, timeout_minutes = strike_manager.add_strike(member.id, "Repeated gatekeeping after warning", bot.user.id, res.violation_type)
-            await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, timeout_minutes, res.matched_pattern)
+            strike_count, timeout_minutes, should_ban = strike_manager.add_strike(member.id, "Repeated gatekeeping after warning", bot.user.id, res.violation_type)
+            await notify_and_punish(message, member, res.reason, res.violation_type, strike_count, timeout_minutes, should_ban, res.matched_pattern)
         return
 
     await bot.process_commands(message)
@@ -234,15 +242,21 @@ async def strikes_cmd(interaction: discord.Interaction, member: discord.Member):
 @app_commands.describe(member="The member to warn", reason="Reason for the warning")
 @app_commands.default_permissions(moderate_members=True)
 async def warn_cmd(interaction: discord.Interaction, member: discord.Member, reason: str):
-    strike_count, timeout_minutes = strike_manager.add_strike(member.id, reason, interaction.user.id, ViolationType.MANUAL_WARN)
+    strike_count, timeout_minutes, should_ban = strike_manager.add_strike(member.id, reason, interaction.user.id, ViolationType.MANUAL_WARN)
 
-    action_desc = format_duration(timeout_minutes)
+    action_desc = "Permanent Ban (Reached Strike 8 three times)" if should_ban else format_duration(timeout_minutes)
     timeout_duration = timedelta(minutes=timeout_minutes)
 
-    try:
-        await member.timeout(discord.utils.utcnow() + timeout_duration, reason=f"Manual warn: {reason}")
-    except Exception as e:
-        print(f"Failed applying timeout: {e}")
+    if should_ban:
+        try:
+            await interaction.guild.ban(member, reason=f"Dasik Warden [Strike #{strike_count} - 3x Peak Threshold]: {reason}", delete_message_days=1)
+        except Exception as e:
+            print(f"Failed applying ban: {e}")
+    else:
+        try:
+            await member.timeout(discord.utils.utcnow() + timeout_duration, reason=f"Manual warn: {reason}")
+        except Exception as e:
+            print(f"Failed applying timeout: {e}")
 
     # Send DM
     try:

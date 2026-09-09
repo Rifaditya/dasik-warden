@@ -140,10 +140,11 @@ class StrikeManager:
         # Discord limit: 28 days = 28 * 24 * 60 = 40320 minutes
         return min(minutes, 40320)
 
-    def add_strike(self, user_id: int, reason: str, issuer_id: int, violation_type: ViolationType) -> Tuple[int, int]:
+    def add_strike(self, user_id: int, reason: str, issuer_id: int, violation_type: ViolationType) -> Tuple[int, int, bool]:
         """
-        Adds a strike and returns (new_strike_count, timeout_minutes).
-        Never bans outright; progressively silences exponentially.
+        Adds a strike and returns (new_strike_count, timeout_minutes, should_ban).
+        - Strikes 1..9: Progressive exponential timeouts.
+        - Strike 10 (3rd violation at/above Strike 8): Triggers permanent ban.
         """
         key = str(user_id)
         if key not in self._data:
@@ -159,8 +160,9 @@ class StrikeManager:
         self.save()
 
         count = len(self._data[key])
+        should_ban = count >= 10
         timeout_minutes = self.calculate_timeout_minutes(count)
-        return count, timeout_minutes
+        return count, timeout_minutes, should_ban
 
     def get_strikes(self, user_id: int) -> List[Dict[str, Any]]:
         return self._data.get(str(user_id), [])

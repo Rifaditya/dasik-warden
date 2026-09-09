@@ -73,32 +73,53 @@ class TestWardenCore(unittest.TestCase):
             user_id = 9876543210
 
             # Strike 1: 5m timeout
-            c1, m1 = sm.add_strike(user_id, "Piracy link", 111, ViolationType.PIRACY)
+            c1, m1, b1 = sm.add_strike(user_id, "Infraction 1", 111, ViolationType.PIRACY)
             self.assertEqual(c1, 1)
             self.assertEqual(m1, 5)
+            self.assertFalse(b1)
 
             # Strike 2: 10m timeout
-            c2, m2 = sm.add_strike(user_id, "Repeated gatekeeping", 111, ViolationType.GATEKEEPING)
+            c2, m2, b2 = sm.add_strike(user_id, "Infraction 2", 111, ViolationType.GATEKEEPING)
             self.assertEqual(c2, 2)
             self.assertEqual(m2, 10)
+            self.assertFalse(b2)
 
             # Strike 3: 20m timeout
-            c3, m3 = sm.add_strike(user_id, "Third infraction", 111, ViolationType.MANUAL_WARN)
+            c3, m3, b3 = sm.add_strike(user_id, "Infraction 3", 111, ViolationType.MANUAL_WARN)
             self.assertEqual(c3, 3)
             self.assertEqual(m3, 20)
+            self.assertFalse(b3)
 
-            # Strike 4: 40m timeout
-            c4, m4 = sm.add_strike(user_id, "Fourth infraction", 111, ViolationType.MANUAL_WARN)
-            self.assertEqual(c4, 4)
-            self.assertEqual(m4, 40)
+            # Strike 4..7: exponential doubling
+            for i in range(4, 8):
+                c, m, b = sm.add_strike(user_id, f"Infraction {i}", 111, ViolationType.MANUAL_WARN)
+                self.assertEqual(c, i)
+                self.assertFalse(b)
+
+            # Strike 8 (1st peak): 640m timeout, NO ban
+            c8, m8, b8 = sm.add_strike(user_id, "Infraction 8 (1st Peak)", 111, ViolationType.MANUAL_WARN)
+            self.assertEqual(c8, 8)
+            self.assertEqual(m8, 640)
+            self.assertFalse(b8)
+
+            # Strike 9 (2nd peak): 1280m timeout, NO ban
+            c9, m9, b9 = sm.add_strike(user_id, "Infraction 9 (2nd Peak)", 111, ViolationType.MANUAL_WARN)
+            self.assertEqual(c9, 9)
+            self.assertEqual(m9, 1280)
+            self.assertFalse(b9)
+
+            # Strike 10 (3rd peak): Permanent Ban!
+            c10, m10, b10 = sm.add_strike(user_id, "Infraction 10 (3rd Peak)", 111, ViolationType.MANUAL_WARN)
+            self.assertEqual(c10, 10)
+            self.assertTrue(b10)
 
             # Verify fetch
             history = sm.get_strikes(user_id)
-            self.assertEqual(len(history), 4)
+            self.assertEqual(len(history), 10)
 
             # Clear strikes
             cleared = sm.clear_strikes(user_id)
-            self.assertEqual(cleared, 4)
+            self.assertEqual(cleared, 10)
             self.assertEqual(len(sm.get_strikes(user_id)), 0)
         finally:
             if os.path.exists(test_db):
