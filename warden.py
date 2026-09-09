@@ -197,31 +197,45 @@ async def on_message(message: discord.Message):
         await notify_and_punish(message, member, res.reason, res.violation_type, 3, active_pts, timeout_mins, action_desc, should_ban, res.matched_pattern)
         return
 
-    # 3. Gatekeeping ("Help or Stay Silent") -> Polite Reminder Nudge (or 1-2 Points on persistence)
+    # 3. Gatekeeping ("Help or Stay Silent") -> Polite Direct Message Warning (or 1 Demerit on persistence)
     if res.violation_type == ViolationType.GATEKEEPING:
         _, active_records = demerit_manager.get_active_points(member.id)
         recent_gk = [s for s in active_records if s.get("type") == ViolationType.GATEKEEPING.value]
         
-        # If first time, send educational nudge without deleting message
+        # If first time, send educational warning directly via DM
         if len(recent_gk) == 0:
             nudge_embed = discord.Embed(
-                title="✨ Friendly Reminder: Help or Stay Silent",
+                title="✨ Friendly Warning: Help or Stay Silent",
                 description=(
-                    f"Hey {member.mention},\n\n"
-                    "In our community, **no question is a stupid question**.\n"
+                    f"Hello {member.mention},\n\n"
+                    "In the **Dasik Igaijinn** community, **no question is a stupid question**.\n"
                     "If you feel a question is basic or repetitive and don't feel like answering kindly, "
-                    "please **stay silent and let others or the dev answer**.\n\n"
-                    "Avoid sarcastic remarks like *'google is free'* or *'read the wiki'*. "
-                    "Let's keep this space welcoming for beginners!"
+                    "please **stay silent and let others or the developer answer**.\n\n"
+                    "Please avoid sarcastic remarks like *'google is free'* or *'just read the wiki'*. "
+                    "Let's keep this space welcoming for beginners!\n\n"
+                    "ℹ️ *This is a zero-point educational caution. No demerit points were added.*"
                 ),
                 color=0x3498db
             )
             nudge_embed.set_footer(text="Dasik Igaijinn Zero-Gatekeeping Policy")
-            await message.reply(embed=nudge_embed, delete_after=30)
+            dm_sent = False
+            try:
+                await member.send(embed=nudge_embed)
+                dm_sent = True
+            except Exception:
+                pass
+
+            # If user's DMs are disabled, reply in channel briefly
+            if not dm_sent:
+                try:
+                    await message.reply(embed=nudge_embed, delete_after=30)
+                except Exception:
+                    pass
+
             # Record caution without adding demerit points
             demerit_manager.add_demerit(member.id, "Gatekeeping caution (first notice)", bot.user.id, res.violation_type, points=0)
         else:
-            # Repeated offense -> 1 Demerit Point
+            # Repeated offense -> 1 Demerit Point with direct DM notification
             try:
                 await message.delete()
             except Exception:
