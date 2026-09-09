@@ -5,7 +5,7 @@ Unit tests for Dasik Warden evaluation heuristics and strike progression.
 
 import os
 import unittest
-from warden_core import evaluate_message_content, ViolationType, StrikeManager
+from warden_core import evaluate_message_content, ViolationType, DemeritManager
 
 class TestWardenCore(unittest.TestCase):
 
@@ -63,67 +63,66 @@ class TestWardenCore(unittest.TestCase):
             self.assertEqual(res.violation_type, ViolationType.ZERO_TOLERANCE)
             self.assertTrue(res.auto_delete)
 
-    def test_strike_ladder(self):
-        test_db = "test_strikes.json"
+    def test_demerit_system_and_decay(self):
+        test_db = "test_demerits.json"
         if os.path.exists(test_db):
             os.remove(test_db)
 
         try:
-            sm = StrikeManager(storage_path=test_db)
+            dm = DemeritManager(storage_path=test_db)
             user_id = 9876543210
+            base_time = 1700000000
 
-            # Strike 1: 5m timeout
-            c1, m1, b1 = sm.add_strike(user_id, "Infraction 1", 111, ViolationType.PIRACY)
-            self.assertEqual(c1, 1)
-            self.assertEqual(m1, 5)
-            self.assertFalse(b1)
+            # 1. First infraction: Gatekeeping (+1 pt) -> Caution (0m timeout)
+            p1, t1, desc1, ban1 = dm.add_demerit(user_id, "Gatekeeping", 111, ViolationType.GATEKEEPING, custom_time=base_time)
+            self.assertEqual(p1, 1)
+            self.assertEqual(t1, 0)
+            self.assertFalse(ban1)
 
-            # Strike 2: 10m timeout
-            c2, m2, b2 = sm.add_strike(user_id, "Infraction 2", 111, ViolationType.GATEKEEPING)
-            self.assertEqual(c2, 2)
-            self.assertEqual(m2, 10)
-            self.assertFalse(b2)
+            # 2. Second infraction: Piracy (+3 pts) -> Total 4 pts -> 15-minute timeout
+            p2, t2, desc2, ban2 = dm.add_demerit(user_id, "Piracy link", 111, ViolationType.PIRACY, custom_time=base_time + 100)
+            self.assertEqual(p2, 4)
+            self.assertEqual(t2, 15)
+            self.assertFalse(ban2)
 
-            # Strike 3: 20m timeout
-            c3, m3, b3 = sm.add_strike(user_id, "Infraction 3", 111, ViolationType.MANUAL_WARN)
-            self.assertEqual(c3, 3)
-            self.assertEqual(m3, 20)
-            self.assertFalse(b3)
+            # 3. Third infraction: Manual warning (+2 pts) -> Total 6 pts -> 1-hour timeout
+            p3, t3, desc3, ban3 = dm.add_demerit(user_id, "Rude comment", 111, ViolationType.MANUAL_WARN, custom_time=base_time + 200)
+            self.assertEqual(p3, 6)
+            self.assertEqual(t3, 60)
+            self.assertFalse(ban3)
 
-            # Strike 4..7: exponential doubling
-            for i in range(4, 8):
-                c, m, b = sm.add_strike(user_id, f"Infraction {i}", 111, ViolationType.MANUAL_WARN)
-                self.assertEqual(c, i)
-                self.assertFalse(b)
+            # 4. Test 30-day point decay / rehabilitation
+            # Query 31 days in the future (31 * 86400 seconds)
+            future_time = base_time + (31 * 86400)
+            active_pts, active_records = dm.get_active_points(user_id, current_time=future_time)
+            self.assertEqual(active_pts, 0)
+            self.assertEqual(len(active_records), 0)
 
-            # Strike 8 (1st peak): 640m timeout, NO ban
-            c8, m8, b8 = sm.add_strike(user_id, "Infraction 8 (1st Peak)", 111, ViolationType.MANUAL_WARN)
-            self.assertEqual(c8, 8)
-            self.assertEqual(m8, 640)
-            self.assertFalse(b8)
+            # 5. Add infraction after clean period -> Starts fresh from newly added points!
+            p4, t4, desc4, ban4 = dm.add_demerit(user_id, "New infraction after clean slate", 111, ViolationType.PIRACY, custom_time=future_time)
+            self.assertEqual(p4, 3)
+            self.assertEqual(t4, 15)
+            self.assertFalse(ban4)
 
-            # Strike 9 (2nd peak): 1280m timeout, NO ban
-            c9, m9, b9 = sm.add_strike(user_id, "Infraction 9 (2nd Peak)", 111, ViolationType.MANUAL_WARN)
-            self.assertEqual(c9, 9)
-            self.assertEqual(m9, 1280)
-            self.assertFalse(b9)
+            # 6. Test 12-point threshold and 3-strike suspension permanent ban
+            dm.clear_demerits(user_id)
+            # 1st time hitting 12 pts
+            p_hit1, _, _, ban_hit1 = dm.add_demerit(user_id, "Major violation 1", 111, ViolationType.ZERO_TOLERANCE, points=12, custom_time=future_time)
+            self.assertEqual(p_hit1, 12)
+            self.assertFalse(ban_hit1)  # 1st suspension, no ban
 
-            # Strike 10 (3rd peak): Permanent Ban!
-            c10, m10, b10 = sm.add_strike(user_id, "Infraction 10 (3rd Peak)", 111, ViolationType.MANUAL_WARN)
-            self.assertEqual(c10, 10)
-            self.assertTrue(b10)
+            # 2nd time hitting 12 pts
+            p_hit2, _, _, ban_hit2 = dm.add_demerit(user_id, "Major violation 2", 111, ViolationType.ZERO_TOLERANCE, points=12, custom_time=future_time + 10)
+            self.assertFalse(ban_hit2)  # 2nd suspension, no ban
 
-            # Verify fetch
-            history = sm.get_strikes(user_id)
-            self.assertEqual(len(history), 10)
+            # 3rd time hitting 12 pts -> BAN!
+            p_hit3, _, _, ban_hit3 = dm.add_demerit(user_id, "Major violation 3", 111, ViolationType.ZERO_TOLERANCE, points=12, custom_time=future_time + 20)
+            self.assertTrue(ban_hit3)  # 3rd suspension triggers Permanent Ban!
 
-            # Clear strikes
-            cleared = sm.clear_strikes(user_id)
-            self.assertEqual(cleared, 10)
-            self.assertEqual(len(sm.get_strikes(user_id)), 0)
         finally:
             if os.path.exists(test_db):
                 os.remove(test_db)
 
 if __name__ == "__main__":
     unittest.main()
+
