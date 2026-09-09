@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 strikes.json
+desktop.ini
+oracle_capacity_scout.py
